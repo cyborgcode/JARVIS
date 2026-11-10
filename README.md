@@ -42,36 +42,35 @@
 
 ## 🚀 Quick start (2 minutes)
 
-> **You need:** Windows 10/11 or Linux ([see below](#-linux)) · internet · a microphone · **one free AI key** (1 minute to get, see below). **That's it.**
+> **You need:** Windows 10/11 or Linux (Ubuntu/Debian) · internet · a microphone · **one free AI key** (1 minute to get, see below). **That's it.**
 
-**1. Download.** Click the green **Code** button, choose **Download ZIP**, and **extract** it (right-click → *Extract All*). Or:
+**1. Download.**
 ```bash
-git clone https://github.com/SeifEddineMezned/JARVIS.git
+git clone https://github.com/cyborgcode/JARVIS.git
 ```
+Or click the green **Code** button, choose **Download ZIP**, and extract it.
 
 **2. Get a free key.** Go to **[aistudio.google.com/apikey](https://aistudio.google.com/apikey)**, sign in with Google, click **Create API key**, and copy it.
 
-**3. Double-click `start.bat`.** It installs **everything** by itself (Python if you don't have it, plus all of Jarvis's packages, about 2 minutes the first time), then asks you to **paste your key**. It checks that the key works and launches Jarvis.
+**3. Start it.**
+
+| Windows | Linux |
+|---|---|
+| Double-click **`start.bat`** | Open a terminal in the `JARVIS` folder and run **`bash start.sh`** |
+
+The first time, it installs **everything** by itself (about 2 minutes), asks you to **paste your key**, checks that the key works, and launches Jarvis. On Windows that includes Python itself. On Linux it installs the few system packages it needs (it asks for your password once) and offers to install **Google Chrome** for voice input.
 
 **4.** The HUD opens. Click **INITIALIZE**, click **Allow** for the microphone, and say:
 
 > ### *"Jarvis, show me what you can do."*
 
-Next time, just double-click `start.bat`. It skips everything already installed and launches in seconds.
+Next time, run the same thing again (`start.bat` or `bash start.sh`). It skips everything already installed and launches in seconds.
 
-### 🐧 Linux
-
-Linux support lives on the `linux-support` branch of [cyborgcode/JARVIS](https://github.com/cyborgcode/JARVIS) (a fork of this project), so clone that branch:
-
-```bash
-git clone -b linux-support https://github.com/cyborgcode/JARVIS.git
-cd JARVIS
-bash start.sh
-```
+### 🐧 Linux notes
 
 Tested on Ubuntu 26.04 (GNOME, Wayland). Other Debian/Ubuntu-based distros and X11 sessions use the same script but haven't been tested yet.
 
-`start.sh` does what `start.bat` does: installs the few system packages it needs (it asks for your password once), creates the private Python environment, asks for your key, and offers to install **Google Chrome**, which voice input needs (Firefox has no speech recognition, and Chromium usually lacks Google's speech keys). Without Chrome you can still type commands.
+**Voice needs Google Chrome:** Firefox has no speech recognition, and Chromium usually lacks Google's speech keys. Without Chrome you can still type commands in the HUD.
 
 **Wayland (Ubuntu's default):** apps can't control the mouse or see the screen without asking, so on the first launch your desktop asks to share the screen. Pick your screen, **switch on "Allow remote interaction"**, and click **Share**. Jarvis remembers this, so you won't be asked again. A remote-control indicator stays in the top bar while Jarvis runs; stopping it there is the emergency stop.
 
@@ -85,7 +84,7 @@ Tested on Ubuntu 26.04 (GNOME, Wayland). Other Debian/Ubuntu-based distros and X
 
 ## 🔑 Free AI keys
 
-You need **one** key (`start.bat` asks for it). **Want more free requests?** Open the `.env` file with Notepad and paste extra keys: Jarvis chains all of them and switches the moment one is busy or out of quota (watch the **NEURAL CORES** panel).
+You need **one** key (`start.bat` / `start.sh` asks for it). **Want more free requests?** Open the `.env` file in a text editor and paste extra keys: Jarvis chains all of them and switches the moment one is busy or out of quota (watch the **NEURAL CORES** panel).
 
 | Provider | Free tier\* | Card? | Get a key (≈1 min) |
 |---|---|:-:|---|
@@ -101,7 +100,7 @@ You need **one** key (`start.bat` asks for it). **Want more free requests?** Ope
 **Recommended:** `GEMINI_API_KEY` + `GROQ_API_KEY`, both free with no card.
 
 ```ini
-# .env  (created by start.bat, git-ignored: never commit it!)
+# .env  (created by start.bat / start.sh, git-ignored: never commit it!)
 GEMINI_API_KEY=AIza...
 GROQ_API_KEY=gsk_...
 ```
@@ -176,13 +175,13 @@ Restart, then say *"Jarvis, tell me a joke about Python."* The AI discovers the 
 | Problem | Fix |
 |---|---|
 | Windows says "Windows protected your PC" | **More info → Run anyway** (it's a plain `.bat` + `.ps1` script, so you can read them first) |
-| Setup stopped halfway (Wi-Fi dropped…) | Just double-click `start.bat` again. Finished steps are skipped. |
-| "That key was rejected" | Copy the **whole** key again from the provider's page, then paste it with a right-click in the black window |
-| I want to change my key | Open `.env` with Notepad, replace the key after `GEMINI_API_KEY=`, save, and restart `start.bat` |
-| Jarvis doesn't hear me | Use **Edge or Chrome**, click **Allow** for the mic, check the **MIC** chip. Hold **SPACE** to talk without the wake word. |
+| Setup stopped halfway (Wi-Fi dropped…) | Just run `start.bat` / `bash start.sh` again. Finished steps are skipped. |
+| "That key was rejected" | Copy the **whole** key again from the provider's page, then paste it with a right-click in the black window (Linux terminal: **Ctrl+Shift+V**) |
+| I want to change my key | Open `.env` in a text editor, replace the key after `GEMINI_API_KEY=`, save, and restart Jarvis |
+| Jarvis doesn't hear me | Use **Edge or Chrome** (Linux: **Google Chrome**), click **Allow** for the mic, check the **MIC** chip. Hold **SPACE** to talk without the wake word. |
 | The grey text says `heard: "…"` | The mic works, but you didn't start with "Jarvis". Say it first, or hold SPACE. |
 | "This HUD is on standby" | Another Jarvis window is open. Only one listens at a time. Click to take control. |
-| "Out of free quota" | Add another free key to `.env` (Groq is the most generous) and restart `start.bat` |
+| "Out of free quota" | Add another free key to `.env` (Groq is the most generous) and restart Jarvis |
 | Jarvis clicks the wrong spot | Make sure the target is visible on your **main** monitor. Gemini gives the most accurate vision. |
 | Something goes wrong mid-action | **Slam the mouse into a screen corner** (fail-safe), or press **ESC**. Linux Wayland: stop the screen sharing from the top bar. |
 | Linux: Jarvis can't click or type | In the sharing dialog, **"Allow remote interaction"** must be on. Delete the `.portal_token` file and restart to be asked again. |
