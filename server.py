@@ -13,6 +13,7 @@ import itertools
 import os
 import platform
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -69,7 +70,7 @@ try:
                   on_status=lambda cores: broadcast({"type": "cores", "cores": cores}))
 except RuntimeError as exc:
     sys.exit(f"\n[!] {exc}\n    Copy .env.example to .env and add at least one free key (see README: 'Free AI keys').\n")
-overlay = Overlay()
+overlay = Overlay((tools.SCREEN_W, tools.SCREEN_H), cursor=tools.pyautogui.position)
 
 
 @asynccontextmanager
@@ -284,7 +285,7 @@ async def stats_loop(ctx: Ctx):
             "type": "stats",
             "cpu": psutil.cpu_percent(), "cores": psutil.cpu_percent(percpu=True),
             "ram": vm.percent, "ram_used": round(vm.used / 1e9, 1), "ram_total": round(vm.total / 1e9, 1),
-            "disk": psutil.disk_usage(os.environ.get("SystemDrive", "C:") + "\\").percent,
+            "disk": psutil.disk_usage(tools.SYSTEM_DISK).percent,
             "up": (n.bytes_sent - last.bytes_sent) / dt / 1024, "down": (n.bytes_recv - last.bytes_recv) / dt / 1024,
             "battery": bat.percent if bat else None, "plugged": bat.power_plugged if bat else None,
             "procs": len(psutil.pids()),
@@ -406,15 +407,25 @@ def open_hud():
     if SESSIONS:
         print("  HUD already open - reconnected.")
         return
+    # Edge/Chrome "app mode" = chromeless window. Flags keep voice + animation alive when other apps cover it.
+    flags = ["--disable-features=CalculateNativeWinOcclusion,Translate",
+             "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
+             "--disable-backgrounding-occluded-windows", "--autoplay-policy=no-user-gesture-required"]
     try:
-        # Edge "app mode" = chromeless window. Flags keep voice + animation alive when other apps cover it.
-        flags = ["--disable-features=CalculateNativeWinOcclusion,Translate",
-                 "--disable-background-timer-throttling", "--disable-renderer-backgrounding",
-                 "--disable-backgrounding-occluded-windows", "--autoplay-policy=no-user-gesture-required"]
-        subprocess.Popen(["cmd", "/c", "start", "", "msedge", f"--app={url}", "--start-maximized", *flags],
-                         creationflags=subprocess.CREATE_NO_WINDOW)
+        if tools.IS_WINDOWS:
+            subprocess.Popen(["cmd", "/c", "start", "", "msedge", f"--app={url}", "--start-maximized", *flags],
+                             creationflags=subprocess.CREATE_NO_WINDOW)
+            return
+        # Linux: Google Chrome first - its voice recognition works; Chromium builds usually lack Google's speech keys.
+        browser = next(filter(None, map(shutil.which, ("google-chrome", "google-chrome-stable", "microsoft-edge",
+                                                       "microsoft-edge-stable", "chromium", "chromium-browser"))), None)
+        if browser:
+            tools._detached([browser, f"--app={url}", "--start-maximized", *flags])
+            return
+        print("  No Chrome/Edge found: opening the HUD in your default browser (voice input needs Google Chrome).")
     except Exception:
-        webbrowser.open(url)
+        pass
+    webbrowser.open(url)
 
 
 if __name__ == "__main__":
@@ -427,5 +438,6 @@ if __name__ == "__main__":
  ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝   IRON MAN MODE
 """)
     print(f"  HUD:  http://localhost:{PORT}")
-    print("  Emergency stop: slam the mouse into any screen corner.\n")
+    print("  Emergency stop: " + ("press ESC in the HUD, or stop the screen sharing from the top bar.\n" if tools.IS_WAYLAND
+                                  else "slam the mouse into any screen corner.\n"))
     uvicorn.run(app, host="127.0.0.1", port=PORT, log_level="warning")

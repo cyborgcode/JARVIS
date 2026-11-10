@@ -1,4 +1,5 @@
 .env
 .venv/
+.portal_token
 __pycache__/
 *.pyc

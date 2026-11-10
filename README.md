@@ -7,6 +7,7 @@
 <img src="assets/hud-ironman.png" alt="J.A.R.V.I.S. holographic HUD" width="100%">
 
 ![Windows](https://img.shields.io/badge/Windows-10%20%7C%2011-0078D6?logo=windows&logoColor=white)
+![Linux](https://img.shields.io/badge/Linux-Ubuntu%20%7C%20Debian-E95420?logo=ubuntu&logoColor=white)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)
 ![Free AI](https://img.shields.io/badge/AI-100%25%20free%20tiers-00e5ff)
 ![Setup](https://img.shields.io/badge/setup-1%20click-brightgreen)
@@ -41,7 +42,7 @@
 
 ## 🚀 Quick start (2 minutes)
 
-> **You need:** Windows 10/11 · internet · a microphone · **one free AI key** (1 minute to get, see below). **That's it.**
+> **You need:** Windows 10/11 or Linux ([see below](#-linux)) · internet · a microphone · **one free AI key** (1 minute to get, see below). **That's it.**
 
 **1. Download.** Click the green **Code** button, choose **Download ZIP**, and **extract** it (right-click → *Extract All*). Or:
 ```bash
@@ -57,6 +58,19 @@ git clone https://github.com/SeifEddineMezned/JARVIS.git
 > ### *"Jarvis, show me what you can do."*
 
 Next time, just double-click `start.bat`. It skips everything already installed and launches in seconds.
+
+### 🐧 Linux
+
+Tested on Ubuntu 26.04 (GNOME, Wayland); other Debian/Ubuntu-based distros and X11 sessions use the same script.
+
+```bash
+cd JARVIS
+bash start.sh
+```
+
+`start.sh` does what `start.bat` does: installs the few system packages it needs (it asks for your password once), creates the private Python environment, asks for your key, and offers to install **Google Chrome**, which voice input needs (Firefox has no speech recognition, and Chromium usually lacks Google's speech keys). Without Chrome you can still type commands.
+
+**Wayland (Ubuntu's default):** apps can't control the mouse or see the screen without asking, so on the first launch your desktop asks to share the screen. Pick your screen, **switch on "Allow remote interaction"**, and click **Share**. Jarvis remembers this, so you won't be asked again. A remote-control indicator stays in the top bar while Jarvis runs; stopping it there is the emergency stop.
 
 ---
 
@@ -100,12 +114,12 @@ Start with **"Jarvis, …"**, or hold **SPACE** and just talk.
 | *"Build a landing page for a coffee shop called Stark Brew."* | Code streams in the HUD, then opens in VS Code + browser |
 | *"Build a 5-slide presentation about AI agents."* then *"Present it."* | Scrolls, points, clicks and narrates each slide |
 | *"Make it dark mode with a pricing section."* | Edits what it built |
-| *"Write a Python script for the first 20 Fibonacci numbers and run it."* | Writes the file and runs it in PowerShell |
+| *"Write a Python script for the first 20 Fibonacci numbers and run it."* | Writes the file and runs it (PowerShell on Windows, bash on Linux) |
 | *"What's on my screen?"* · *"Click the search box."* | Screen vision + targeted click |
 | *"What am I holding?"* · *"How many fingers am I holding up?"* · *"Read what's on this paper."* | Webcam vision with targeting boxes |
 | *"Tell me about yourself."* · *"I'm so tired."* | Personality: expect sarcasm, served politely |
 
-**Controls:** `SPACE` hold to talk · `ESC` stop talking / stop the presentation · **slam the mouse into a screen corner** = emergency stop.
+**Controls:** `SPACE` hold to talk · `ESC` stop talking / stop the presentation · **slam the mouse into a screen corner** = emergency stop (on Linux Wayland: stop the screen sharing from the top bar).
 Showcase mode (themes cycle automatically): open `http://localhost:8765/#autoboot-demo-cycle`.
 
 ---
@@ -130,7 +144,8 @@ flowchart LR
 | `brain.py` | The agent loop: the AI decides which tools to call, chains steps, never repeats itself, fails over between providers |
 | `providers.py` | One interface for Gemini + any OpenAI-compatible API. Adding a provider takes about 5 lines. |
 | `tools.py` | Every capability is a plain Python function + a JSON schema |
-| `overlay.py` | Transparent, click-through window that draws effects over your real desktop |
+| `overlay.py` | Transparent, click-through window that draws effects over your real desktop (Tk on Windows, GTK on Linux) |
+| `wayland.py` | Linux Wayland: mouse, keyboard and screenshots through the desktop's screen-sharing portal |
 | `server.py` | FastAPI + WebSockets, neural voice, telemetry, page bridge |
 | `static/` | The HUD (canvas arc reactor, voice, live theming) and `bridge.js` for presenting pages |
 
@@ -160,10 +175,13 @@ Restart, then say *"Jarvis, tell me a joke about Python."* The AI discovers the 
 | "This HUD is on standby" | Another Jarvis window is open. Only one listens at a time. Click to take control. |
 | "Out of free quota" | Add another free key to `.env` (Groq is the most generous) and restart `start.bat` |
 | Jarvis clicks the wrong spot | Make sure the target is visible on your **main** monitor. Gemini gives the most accurate vision. |
-| Something goes wrong mid-action | **Slam the mouse into a screen corner** (fail-safe), or press **ESC** |
+| Something goes wrong mid-action | **Slam the mouse into a screen corner** (fail-safe), or press **ESC**. Linux Wayland: stop the screen sharing from the top bar. |
+| Linux: Jarvis can't click or type | In the sharing dialog, **"Allow remote interaction"** must be on. Delete the `.portal_token` file and restart to be asked again. |
+| Linux: no desktop effects (HUD shows **OVERLAY PROJECTION: OFFLINE**) | They need a compositing desktop (GNOME and KDE are) and `python3-gi-cairo`, which `start.sh` installs. |
+| Linux: `open Paint` doesn't work | Ubuntu has no paint app by default. Install one, e.g. `sudo apt install drawing`. |
 | "Camera unavailable" | Click **Allow** for the camera in the HUD (asked the first time), and close other apps using the webcam (Zoom, Teams…) |
 
-**Safety:** Jarvis only runs while `start.bat` is open, refuses obviously destructive commands, and asks before closing unsaved work. Your keys stay in your local `.env`.
+**Safety:** Jarvis only runs while `start.bat` (or the `start.sh` terminal) is open, refuses obviously destructive commands, and asks before closing unsaved work. Your keys stay in your local `.env`.
 
 **Privacy:** the webcam turns on **only** when you ask Jarvis to look at you. A single snapshot is sent to your AI provider (nothing is recorded), and the camera switches off after 20 seconds. Screenshots for screen vision work the same way.
 

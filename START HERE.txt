@@ -21,5 +21,7 @@
 -----------------------------------------------------
  Next time: just double-click start.bat again (it starts in seconds).
  Emergency stop: push your mouse hard into any corner of the screen.
+ Linux: open a terminal in this folder and run  bash start.sh  instead
+ (see README.md -> Linux).
  To stop Jarvis: close the black window.
 -----------------------------------------------------

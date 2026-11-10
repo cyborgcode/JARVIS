@@ -1,3 +1,5 @@
 # Windows scripts must keep their CRLF line endings exactly (also in GitHub "Download ZIP")
 *.bat -text
 *.cmd -text
+# Shell scripts must keep LF line endings or bash refuses them
+*.sh text eol=lf

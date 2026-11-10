@@ -27,7 +27,7 @@ PROMISE_RE = re.compile(r"\b(right away|at once|on it|fabricat\w*|building|creat
 # tools whose repetition the user would notice (opening twice, building twice...)
 ONCE_PER_REQUEST = {"open_application", "open_website", "google_search", "play_youtube", "build_web_page",
                     "present_page", "customize_interface", "type_text", "draw_with_mouse", "write_file",
-                    "run_powershell", "media_control", "window_control", "look_through_camera"}
+                    "run_command", "media_control", "window_control", "look_through_camera"}
 FATAL_RE = re.compile(r"\b(401|403)\b|invalid api key|api key not valid|API_KEY_INVALID|unauthorized|authentication", re.I)
 
 
@@ -63,7 +63,7 @@ def _similar(a: str, b: str) -> bool:
 
 
 PERSONALITY_FILE = Path(__file__).resolve().parent / "personality.md"
-DEFAULT_PERSONALITY = """You are J.A.R.V.I.S., a witty, helpful British AI butler on the user's Windows PC.
+DEFAULT_PERSONALITY = """You are J.A.R.V.I.S., a witty, helpful British AI butler on the user's computer.
 Address the user as "{honorific}". Replies are spoken aloud: one to three short sentences, no markdown or emojis."""
 
 
@@ -95,6 +95,11 @@ def situation() -> str:
 
 
 def system_prompt(honorific: str) -> str:
+    if tools.IS_WINDOWS:
+        paint = "To draw in Paint: open_application('paint'), wait 2 s, window_control('maximize'), wait 1 s, then draw_with_mouse."
+    else:
+        paint = ("To draw: open_application('paint') opens a drawing app if one is installed (Drawing, Pinta, KolourPaint); "
+                 "if none is, say so and offer to install one or draw in the air instead (hold_button=false).")
     return personality(honorific) + f"""
 
 # How you operate (technical rules — always follow these)
@@ -109,8 +114,9 @@ BUILDING THINGS (be fast and impressive):
   call build_web_page ONCE with a rich, detailed description (add tasteful extra features and a slick modern
   design the user didn't ask for). It writes the full code itself, streams it on the HUD and opens it.
   NEVER type code into Notepad and never write HTML yourself in type_text.
-- Other files (python scripts, text, csv, notes) -> write_file. To run them -> run_powershell
-  (e.g. "python script.py"). Use run_powershell for folders, listing files, git, pip, system info.
+- Other files (python scripts, text, csv, notes) -> write_file. To run them -> run_command
+  (e.g. "{'python' if tools.IS_WINDOWS else 'python3'} script.py"). Use run_command for folders, listing files, git, pip,
+  system info. Commands run in {tools.SHELL}{'' if tools.IS_WINDOWS else ' (Linux: never use sudo, ask the user instead)'}.
 - To modify something you built: read_file, then write_file with the full new content (open_with='browser').
 - ALWAYS call the tool in the SAME response as any announcement. Never reply with only "Right away" — act.
 
@@ -134,12 +140,12 @@ TIPS:
 - To interact with anything visible, use click_on_screen with a clear visual description.
 - If unsure what is on screen or whether something worked, use look_at_screen.
 - For music or videos, use play_youtube.
-- To draw in Paint: open_application('paint'), wait 2 s, window_control('maximize'), wait 1 s, then draw_with_mouse.
+- {paint}
 - When asked to "show off" or "show what you can do", put on a show: e.g. draw an arc_reactor in the air
   with the cursor (hold_button=false), report system diagnostics, and make a witty remark.
 - You may add a very short spoken line (a quick quip is welcome) but ONLY together with the tool call in the same response.
 
-Context: {platform.system()} {platform.release()}, screen {tools.SCREEN_W}x{tools.SCREEN_H}, machine "{platform.node()}".
+Context: {tools.os_name()}, screen {tools.SCREEN_W}x{tools.SCREEN_H}, machine "{platform.node()}".
 Each user message starts with a [live status] tag (time, CPU, battery...) you can use for context or humour.
 """
 
@@ -184,7 +190,7 @@ class Brain:
         if not ok:
             print("\n  [!] None of your AI keys work right now (wrong key, or free quota used up for today).\n"
                   "      Open .env, check the key, or add another free one (Groq is the most generous).\n"
-                  "      See README.md -> 'Free AI keys'. Then restart start.bat.\n")
+                  f"      See README.md -> 'Free AI keys'. Then restart {'start.bat' if tools.IS_WINDOWS else 'start.sh'}.\n")
 
     @property
     def model(self) -> str:

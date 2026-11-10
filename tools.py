@@ -18,11 +18,21 @@ import math
 import os
 import platform
 import re
+import shutil
 import subprocess
+import sys
 import time
 import urllib.parse
 import urllib.request
 import webbrowser
+from pathlib import Path
+
+import wayland
+
+IS_WINDOWS = sys.platform == "win32"
+IS_WAYLAND = wayland.ENABLED
+IS_X11 = sys.platform.startswith("linux") and not IS_WAYLAND
+SYSTEM_DISK = os.environ.get("SystemDrive", "C:") + "\\" if IS_WINDOWS else "/"
 
 # Make coordinates match physical pixels on scaled (125%/150%) displays.
 try:
@@ -32,6 +42,9 @@ except Exception:
         ctypes.windll.user32.SetProcessDPIAware()
     except Exception:
         pass
+
+if IS_WAYLAND:
+    wayland.install()   # GNOME/KDE ask once to share the screen; pyautogui then drives the portal
 
 import mss
 import psutil
@@ -48,10 +61,13 @@ SCREEN_W, SCREEN_H = pyautogui.size()
 # ============================================================== helpers
 def grab_screen(max_w: int = 1600) -> tuple[bytes, Image.Image]:
     """Capture the primary monitor -> (jpeg bytes, PIL image at capture size)."""
-    with mss.MSS() as s:
-        mon = next((m for m in s.monitors[1:] if m["left"] == 0 and m["top"] == 0), s.monitors[1])
-        raw = s.grab(mon)
-    img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
+    if IS_WAYLAND:
+        img = wayland.grab()
+    else:
+        with mss.MSS() as s:
+            mon = next((m for m in s.monitors[1:] if m["left"] == 0 and m["top"] == 0), s.monitors[1])
+            raw = s.grab(mon)
+        img = Image.frombytes("RGB", raw.size, raw.bgra, "raw", "BGRX")
     if img.width > max_w:
         img = img.resize((max_w, int(img.height * max_w / img.width)), Image.LANCZOS)
     buf = io.BytesIO()
@@ -84,6 +100,15 @@ def _typewrite(text: str) -> None:
                 pass
 
 
+def _detached(cmd: list[str], **kw) -> None:
+    """Start a program without tying it to Jarvis (no console window on Windows, own session on Linux)."""
+    if IS_WINDOWS:
+        subprocess.Popen(cmd, creationflags=subprocess.CREATE_NO_WINDOW, **kw)
+    else:
+        subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                         start_new_session=True, **kw)
+
+
 def _fetch(url: str, timeout: float = 8) -> str:
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 JarvisHUD"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
@@ -100,23 +125,68 @@ KNOWN_APPS = {
     "snipping tool": "ms-screenclip:", "spotify": "spotify:", "calendar": "outlookcal:",
     "maps": "bingmaps:", "weather": "bingweather:", "photos": "ms-photos:",
 }
+# Linux: common names -> desktop-file ids to try (first installed one wins)
+LINUX_APPS = {
+    "notepad": ["org.gnome.TextEditor", "org.gnome.gedit", "org.kde.kate"],
+    "text editor": ["org.gnome.TextEditor", "org.gnome.gedit", "org.kde.kate"],
+    "calculator": ["org.gnome.Calculator", "org.kde.kcalc"], "calc": ["org.gnome.Calculator", "org.kde.kcalc"],
+    "paint": ["com.github.maoschanz.drawing", "pinta", "com.github.PintaProject.Pinta", "org.kde.kolourpaint"],
+    "files": ["org.gnome.Nautilus", "org.kde.dolphin"], "file explorer": ["org.gnome.Nautilus", "org.kde.dolphin"],
+    "explorer": ["org.gnome.Nautilus", "org.kde.dolphin"],
+    "terminal": ["org.gnome.Ptyxis", "org.gnome.Terminal", "org.gnome.Console", "org.kde.konsole"],
+    "task manager": ["org.gnome.SystemMonitor", "gnome-system-monitor", "org.kde.plasma-systemmonitor"],
+    "system monitor": ["org.gnome.SystemMonitor", "gnome-system-monitor", "org.kde.plasma-systemmonitor"],
+    "settings": ["org.gnome.Settings", "gnome-control-center", "systemsettings"],
+    "camera": ["org.gnome.Snapshot", "org.gnome.Cheese"], "clock": ["org.gnome.clocks"],
+    "store": ["snap-store_snap-store", "io.snapcraft.Store", "org.gnome.Software"],
+    "calendar": ["org.gnome.Calendar"], "maps": ["org.gnome.Maps"], "weather": ["org.gnome.Weather"],
+    "photos": ["org.gnome.Loupe", "org.gnome.eog"], "vs code": ["code", "code_code"], "vscode": ["code", "code_code"],
+    "chrome": ["google-chrome", "chromium_chromium", "chromium"], "browser": ["firefox_firefox", "firefox"],
+}
+
+
+def _linux_app(name: str):
+    """Find an installed app (desktop file) by common name, id, display name or command."""
+    from gi.repository import Gio
+    key = name.strip().lower()
+    apps = Gio.AppInfo.get_all()
+    by_id = {(a.get_id() or "").removesuffix(".desktop").lower(): a for a in apps}
+    for cand in LINUX_APPS.get(key, []):
+        if cand.lower() in by_id:
+            return by_id[cand.lower()]
+    for a in apps:
+        names = {(a.get_display_name() or "").lower(), (a.get_name() or "").lower(),
+                 (a.get_id() or "").removesuffix(".desktop").lower().split(".")[-1],
+                 os.path.basename(a.get_executable() or "").lower()}
+        if key in names:
+            return a
+    return None
 
 
 def open_application(ctx, name: str) -> dict:
     key = name.strip().lower()
-    target = KNOWN_APPS.get(key)
-    if target:
+    if IS_WINDOWS:
+        target = KNOWN_APPS.get(key)
+        if target:
+            try:
+                if target.endswith(":"):
+                    os.startfile(target)
+                else:
+                    subprocess.Popen(["cmd", "/c", "start", "", target], shell=False,
+                                     creationflags=subprocess.CREATE_NO_WINDOW)
+                time.sleep(1.2)
+                return {"ok": True, "opened": name, "method": "direct"}
+            except Exception:
+                pass
+    else:
         try:
-            if target.endswith(":"):
-                os.startfile(target)
-            else:
-                subprocess.Popen(["cmd", "/c", "start", "", target], shell=False,
-                                 creationflags=subprocess.CREATE_NO_WINDOW)
-            time.sleep(1.2)
-            return {"ok": True, "opened": name, "method": "direct"}
-        except Exception:
-            pass
-    # Fallback: the visual way - Start menu search, exactly like a human.
+            app = _linux_app(key)
+            if app and app.launch([], None):
+                time.sleep(1.5)
+                return {"ok": True, "opened": app.get_display_name(), "method": "direct"}
+        except Exception as exc:
+            print(f"[apps] {exc}")
+    # Fallback: the visual way - Start menu / Activities search, exactly like a human.
     pyautogui.press("win")
     time.sleep(0.7)
     _typewrite(name)
@@ -211,14 +281,24 @@ def look_at_screen(ctx, question: str = "Describe what is on the screen.") -> di
 
 
 def _foreground_center():
-    """Center of the active window (so scrolling hits the app the user is looking at, not the HUD)."""
+    """Center of the active window (so scrolling hits the app the user is looking at, not the HUD).
+    Wayland does not reveal other windows' positions, so there it is the screen center."""
     try:
-        import ctypes.wintypes as wt
-        hwnd = ctypes.windll.user32.GetForegroundWindow()
-        r = wt.RECT()
-        ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(r))
-        if r.right - r.left > 200 and r.bottom - r.top > 200:
-            return (r.left + r.right) // 2, (r.top + r.bottom) // 2
+        if IS_WINDOWS:
+            import ctypes.wintypes as wt
+            hwnd = ctypes.windll.user32.GetForegroundWindow()
+            r = wt.RECT()
+            ctypes.windll.user32.GetWindowRect(hwnd, ctypes.byref(r))
+            left, top, w, h = r.left, r.top, r.right - r.left, r.bottom - r.top
+        elif IS_X11:
+            out = subprocess.run(["xdotool", "getactivewindow", "getwindowgeometry", "--shell"],
+                                 capture_output=True, text=True, timeout=2).stdout
+            g = dict(line.split("=", 1) for line in out.split() if "=" in line)
+            left, top, w, h = int(g["X"]), int(g["Y"]), int(g["WIDTH"]), int(g["HEIGHT"])
+        else:
+            raise LookupError
+        if w > 200 and h > 200:
+            return left + w // 2, top + h // 2
     except Exception:
         pass
     return SCREEN_W // 2, SCREEN_H // 2
@@ -227,9 +307,14 @@ def _foreground_center():
 def smooth_scroll(notches: int) -> None:
     """Scroll like a human: many small wheel steps instead of one jump."""
     step = -1 if notches < 0 else 1
-    for _ in range(abs(int(notches)) * 3):
-        pyautogui.scroll(step * 40, _pause=False)
-        time.sleep(0.012)
+    if IS_WINDOWS:   # Windows wheel units allow thirds of a notch
+        for _ in range(abs(int(notches)) * 3):
+            pyautogui.scroll(step * 40, _pause=False)
+            time.sleep(0.012)
+    else:            # Linux scrolls in whole notches
+        for _ in range(abs(int(notches))):
+            pyautogui.scroll(step, _pause=False)
+            time.sleep(0.03)
 
 
 def look_through_camera(ctx, question: str = "What do you see?") -> dict:
@@ -343,29 +428,75 @@ def media_control(ctx, action: str, steps: int = 5) -> dict:
         return {"ok": False, "error": "unknown action"}
     n = max(1, min(int(steps), 50)) if action.startswith("volume") else 1
     for _ in range(n):
-        pyautogui.press(key)
+        if IS_X11:   # pyautogui's X11 backend has no media keys
+            subprocess.run(["xdotool", "key", X11_MEDIA_KEYS[key]], timeout=3)
+        else:
+            pyautogui.press(key)
         time.sleep(0.03)
     return {"ok": True, "action": action}
 
 
+X11_MEDIA_KEYS = {"playpause": "XF86AudioPlay", "nexttrack": "XF86AudioNext", "prevtrack": "XF86AudioPrev",
+                  "volumeup": "XF86AudioRaiseVolume", "volumedown": "XF86AudioLowerVolume",
+                  "volumemute": "XF86AudioMute"}
+WINDOWS_COMBOS = {
+    "show_desktop": ("win", "d"), "switch_window": ("alt", "tab"), "close_window": ("alt", "f4"),
+    "maximize": ("win", "up"), "minimize": ("win", "down"), "snap_left": ("win", "left"),
+    "snap_right": ("win", "right"), "task_view": ("win", "tab"), "new_tab": ("ctrl", "t"),
+    "close_tab": ("ctrl", "w"), "screenshot_tool": ("win", "shift", "s"),
+}
+# Linux: action -> GNOME settings that hold the user's shortcut, and a default if there is none
+GNOME_SHORTCUTS = {
+    "show_desktop": ([("org.gnome.desktop.wm.keybindings", "show-desktop")], ("win", "d")),
+    "switch_window": ([("org.gnome.desktop.wm.keybindings", "switch-windows")], ("alt", "tab")),
+    "close_window": ([("org.gnome.desktop.wm.keybindings", "close")], ("alt", "f4")),
+    "maximize": ([("org.gnome.desktop.wm.keybindings", "maximize"),
+                  ("org.gnome.desktop.wm.keybindings", "toggle-maximized")], ("win", "up")),
+    "minimize": ([("org.gnome.desktop.wm.keybindings", "minimize")], ("win", "h")),
+    "snap_left": ([("org.gnome.mutter.keybindings", "toggle-tiled-left")], ("win", "left")),
+    "snap_right": ([("org.gnome.mutter.keybindings", "toggle-tiled-right")], ("win", "right")),
+    "task_view": ([("org.gnome.shell.keybindings", "toggle-overview")], ("win",)),
+    "new_tab": ([], ("ctrl", "t")), "close_tab": ([], ("ctrl", "w")),
+    "screenshot_tool": ([("org.gnome.shell.keybindings", "show-screenshot-ui")], ("print",)),
+}
+
+
+def _gnome_shortcut(schema: str, key: str) -> tuple | None:
+    """The user's current shortcut, e.g. ['<Super>d'] -> ('win', 'd'). None if unset or not GNOME."""
+    try:
+        from gi.repository import Gio
+        src = Gio.SettingsSchemaSource.get_default()
+        sch = src.lookup(schema, True) if src else None
+        if not sch or not sch.has_key(key):
+            return None
+        accels = Gio.Settings.new(schema).get_strv(key)
+    except Exception:
+        return None
+    if not accels:
+        return None
+    mods = re.findall(r"<(\w+)>", accels[0])
+    base = re.sub(r"<\w+>", "", accels[0]).lower()
+    names = {"primary": "ctrl", "control": "ctrl", "ctrl": "ctrl", "super": "win", "alt": "alt", "shift": "shift"}
+    keys = {"page_up": "pageup", "page_down": "pagedown", "return": "enter", "escape": "esc"}
+    return (*(names.get(m.lower(), m.lower()) for m in mods), keys.get(base, base))
+
+
 def window_control(ctx, action: str) -> dict:
-    combos = {
-        "show_desktop": ("win", "d"), "switch_window": ("alt", "tab"), "close_window": ("alt", "f4"),
-        "maximize": ("win", "up"), "minimize": ("win", "down"), "snap_left": ("win", "left"),
-        "snap_right": ("win", "right"), "task_view": ("win", "tab"), "new_tab": ("ctrl", "t"),
-        "close_tab": ("ctrl", "w"), "screenshot_tool": ("win", "shift", "s"),
-    }
-    c = combos.get(action)
-    if not c:
+    if action not in WINDOWS_COMBOS:
         return {"ok": False, "error": "unknown action"}
-    pyautogui.hotkey(*c)
+    if IS_WINDOWS:
+        c = WINDOWS_COMBOS[action]
+    else:
+        settings, default = GNOME_SHORTCUTS[action]
+        c = next((k for k in (_gnome_shortcut(*s) for s in settings) if k), default)
+    pyautogui.hotkey(*c) if len(c) > 1 else pyautogui.press(c[0])
     time.sleep(0.5)
     return {"ok": True, "action": action}
 
 
 def get_system_status(ctx) -> dict:
     vm = psutil.virtual_memory()
-    du = psutil.disk_usage(os.environ.get("SystemDrive", "C:") + "\\")
+    du = psutil.disk_usage(SYSTEM_DISK)
     bat = psutil.sensors_battery()
     procs = []
     for p in psutil.process_iter(["name", "memory_info"]):
@@ -383,7 +514,7 @@ def get_system_status(ctx) -> dict:
         "plugged_in": bat.power_plugged if bat else None,
         "uptime_hours": round((time.time() - psutil.boot_time()) / 3600, 1),
         "top_memory_processes": top,
-        "machine": platform.node(), "os": f"{platform.system()} {platform.release()}",
+        "machine": platform.node(), "os": os_name(),
     }
 
 
@@ -404,9 +535,6 @@ def get_weather(ctx, city: str = "") -> dict:
 
 
 # ============================================================== builder tools
-from pathlib import Path
-import shutil
-
 WORKSPACE = Path.home() / "Desktop" / "Jarvis Projects"
 
 
@@ -417,13 +545,18 @@ def _resolve(path: str) -> Path:
 
 def _open_with(path: Path, how: str = "default") -> None:
     if how == "vscode" and shutil.which("code"):
-        subprocess.Popen(["cmd", "/c", "code", str(path)], creationflags=subprocess.CREATE_NO_WINDOW)
+        _detached(["cmd", "/c", "code", str(path)] if IS_WINDOWS else ["code", str(path)])
     elif how == "browser":
         webbrowser.open(path.as_uri())
-    elif how == "explorer":
-        subprocess.Popen(["explorer", "/select,", str(path)])
-    else:
+    elif how == "explorer":   # show it in the file manager
+        if IS_WINDOWS:
+            subprocess.Popen(["explorer", "/select,", str(path)])
+        else:
+            _detached(["xdg-open", str(path if path.is_dir() else path.parent)])
+    elif IS_WINDOWS:
         os.startfile(str(path))
+    else:
+        _detached(["xdg-open", str(path)])
 
 
 PAGE = None          # server.PageBridge, set by server.py at startup
@@ -497,30 +630,46 @@ def open_path(ctx, path: str, open_with: str = "default") -> dict:
     return {"ok": True, "opened": str(p)}
 
 
-DANGEROUS = re.compile(
-    r"(format-volume|format\s+[a-z]:|diskpart|bcdedit|stop-computer|restart-computer|shutdown|"
-    r"remove-item\s+.*(c:\\(windows|users)?\\?\s*$|-recurse.*c:\\\s)|rd\s+/s\s+/q\s+c:\\|reg\s+delete|"
-    r"set-executionpolicy|invoke-expression.*http|iex.*http|cipher\s+/w)",
-    re.I,
-)
+if IS_WINDOWS:
+    SHELL, PROMPT = "PowerShell", "PS> "
+    DANGEROUS = re.compile(
+        r"(format-volume|format\s+[a-z]:|diskpart|bcdedit|stop-computer|restart-computer|shutdown|"
+        r"remove-item\s+.*(c:\\(windows|users)?\\?\s*$|-recurse.*c:\\\s)|rd\s+/s\s+/q\s+c:\\|reg\s+delete|"
+        r"set-executionpolicy|invoke-expression.*http|iex.*http|cipher\s+/w)",
+        re.I,
+    )
+else:
+    SHELL, PROMPT = "bash", "$ "
+    DANGEROUS = re.compile(
+        r"(\bsudo\b|\bsu\s|\bpkexec\b|\bmkfs|\bfdisk\b|\bparted\b|\bwipefs\b|\bshred\b|\bdd\b.*\bof=/dev/|>\s*/dev/[sn]|"
+        r"(^|[;&|(]\s*)(shutdown|reboot|poweroff|halt|init\s+[06])\b|systemctl\s+(poweroff|reboot|halt|suspend)|"
+        r"\brm\s+(-\S*\s+)*(/|/\*|~|~/|~/\*|\$HOME/?|/(bin|boot|etc|home|lib\w*|opt|root|sbin|srv|usr|var)/?)(\s|$)|"
+        r"\bchmod\s+-R\s+\S+\s+/(\s|$)|\bchown\s+-R\s+\S+\s+/(\s|$)|:\(\)\s*\{|"
+        r"(curl|wget)\b.*\|\s*(sudo\s+)?(ba|z|da)?sh\b|find\s+/\s.*-delete)",
+        re.I,
+    )
 
 
-def run_powershell(ctx, command: str, timeout_seconds: int = 60) -> dict:
+def run_command(ctx, command: str, timeout_seconds: int = 60) -> dict:
     if DANGEROUS.search(command):
-        return {"ok": False, "error": "Blocked: this command looks destructive. Ask the user to run it manually."}
+        return {"ok": False, "error": "Blocked: this command looks destructive or needs admin rights. "
+                                      "Ask the user to run it manually."}
     WORKSPACE.mkdir(parents=True, exist_ok=True)
-    ctx.emit({"type": "code_start", "file": "PowerShell"})
-    ctx.emit({"type": "code", "chunk": f"PS> {command}\n"})
+    ctx.emit({"type": "code_start", "file": SHELL})
+    ctx.emit({"type": "code", "chunk": f"{PROMPT}{command}\n"})
+    if IS_WINDOWS:
+        argv, extra = ["powershell", "-NoProfile", "-Command", command], {"creationflags": subprocess.CREATE_NO_WINDOW}
+    else:   # no stdin: a command waiting for input fails instead of hanging until the timeout
+        argv, extra = ["bash", "-c", command], {"stdin": subprocess.DEVNULL}
     try:
-        r = subprocess.run(["powershell", "-NoProfile", "-Command", command], cwd=WORKSPACE,
-                           capture_output=True, text=True, timeout=max(5, min(timeout_seconds, 300)),
-                           creationflags=subprocess.CREATE_NO_WINDOW, encoding="utf-8", errors="replace")
+        r = subprocess.run(argv, cwd=WORKSPACE, capture_output=True, text=True,
+                           timeout=max(5, min(timeout_seconds, 300)), encoding="utf-8", errors="replace", **extra)
         out = (r.stdout or "") + (("\n[stderr]\n" + r.stderr) if r.stderr.strip() else "")
         ctx.emit({"type": "code", "chunk": out[-4000:]})
-        ctx.emit({"type": "code_end", "file": "PowerShell", "chars": len(out)})
+        ctx.emit({"type": "code_end", "file": SHELL, "chars": len(out)})
         return {"ok": r.returncode == 0, "exit_code": r.returncode, "output": out[-6000:]}
     except subprocess.TimeoutExpired:
-        ctx.emit({"type": "code_end", "file": "PowerShell", "chars": 0})
+        ctx.emit({"type": "code_end", "file": SHELL, "chars": 0})
         return {"ok": False, "error": "timed out"}
 
 
@@ -683,7 +832,8 @@ TOOLS = {
                      {"query": {"type": "string"}}, ["query"]),
     "type_text": (type_text, "Type text with the keyboard into the currently focused window.",
                   {"text": {"type": "string"}, "press_enter": {"type": "boolean"}}, ["text"]),
-    "press_keys": (press_keys, "Press a key or keyboard shortcut, e.g. 'enter', 'ctrl+s', 'ctrl+shift+n', 'win+e', 'f5'.",
+    "press_keys": (press_keys, "Press a key or keyboard shortcut, e.g. 'enter', 'ctrl+s', 'ctrl+shift+n', 'f5', "
+                   + ("'win+e'." if IS_WINDOWS else "'win' (the Super key)."),
                    {"keys": {"type": "string"}}, ["keys"]),
     "click_on_screen": (click_on_screen, "Look at the screen, find a UI element from a natural-language description (button, link, icon, text, field) and move the mouse there and click it.",
                         {"target": {"type": "string", "description": "Visual description of what to click, e.g. 'the Search box', 'the first video thumbnail', 'the red X close button'"},
@@ -716,7 +866,7 @@ TOOLS = {
     "read_file": (read_file, "Read a text file's content.", {"path": {"type": "string"}}, ["path"]),
     "open_path": (open_path, "Open an existing file or folder with an app.",
                   {"path": {"type": "string"}, "open_with": {"type": "string", "enum": ["default", "vscode", "browser", "explorer"]}}, ["path"]),
-    "run_powershell": (run_powershell, "Run a PowerShell command and get its output (working dir: Desktop/Jarvis Projects). Use for creating folders, running python/node scripts, git, pip/npm, listing files, system queries. Never destructive.",
+    "run_command": (run_command, f"Run a {SHELL} command and get its output (working dir: Desktop/Jarvis Projects). Use for creating folders, running python/node scripts, git, pip/npm, listing files, system queries. Never destructive.",
                        {"command": {"type": "string"}, "timeout_seconds": {"type": "integer"}}, ["command"]),
     "present_page": (present_page, "PRESENT / walk through / explain a web page or presentation like a real human presenter: scrolls section by section, points at each part with the mouse, and narrates it aloud in sync. Use for 'present it', 'scroll through it and explain', 'walk me through'. With no path it presents the last page you built; otherwise give the file path. For any other page already on screen, call it with no path.",
                      {"path": {"type": "string", "description": "optional file path; empty = last built page or current screen"},
@@ -753,6 +903,18 @@ def execute(ctx, name: str, args: dict):
         return {"ok": False, "error": f"bad arguments: {exc}"}
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
+
+
+def os_name() -> str:
+    """e.g. 'Windows 11' or 'Ubuntu 26.04.1 LTS (GNOME, Wayland)'."""
+    if not sys.platform.startswith("linux"):
+        return f"{platform.system()} {platform.release()}"
+    try:
+        name = platform.freedesktop_os_release().get("PRETTY_NAME", "Linux")
+    except OSError:
+        name = "Linux"
+    desktop = os.environ.get("XDG_CURRENT_DESKTOP", "").split(":")[-1]
+    return f"{name} ({', '.join(filter(None, [desktop, 'Wayland' if IS_WAYLAND else 'X11']))})"
 
 
 def now_string() -> str:
