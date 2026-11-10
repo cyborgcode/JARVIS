@@ -61,16 +61,25 @@ Next time, just double-click `start.bat`. It skips everything already installed 
 
 ### 🐧 Linux
 
-Tested on Ubuntu 26.04 (GNOME, Wayland); other Debian/Ubuntu-based distros and X11 sessions use the same script.
+Linux support lives on the `linux-support` branch of [cyborgcode/JARVIS](https://github.com/cyborgcode/JARVIS) (a fork of this project), so clone that branch:
 
 ```bash
+git clone -b linux-support https://github.com/cyborgcode/JARVIS.git
 cd JARVIS
 bash start.sh
 ```
 
+Tested on Ubuntu 26.04 (GNOME, Wayland). Other Debian/Ubuntu-based distros and X11 sessions use the same script but haven't been tested yet.
+
 `start.sh` does what `start.bat` does: installs the few system packages it needs (it asks for your password once), creates the private Python environment, asks for your key, and offers to install **Google Chrome**, which voice input needs (Firefox has no speech recognition, and Chromium usually lacks Google's speech keys). Without Chrome you can still type commands.
 
 **Wayland (Ubuntu's default):** apps can't control the mouse or see the screen without asking, so on the first launch your desktop asks to share the screen. Pick your screen, **switch on "Allow remote interaction"**, and click **Share**. Jarvis remembers this, so you won't be asked again. A remote-control indicator stays in the top bar while Jarvis runs; stopping it there is the emergency stop.
+
+**Known limits on Wayland:**
+- Slamming the mouse into a screen corner does **not** stop Jarvis: Wayland never tells apps where the real pointer is. Use the top-bar indicator or **ESC** in the HUD.
+- For the same reason, if you move the mouse yourself, Jarvis's next movement starts from where it last left the pointer (a small jump, then the usual glide).
+- Scrolling goes to the middle of the screen, since Wayland doesn't reveal where other windows are.
+- While presenting a page (*"present it"*), the pointer can sit slightly off (about the height of the top bar), because browsers on Wayland report their window position as 0,0.
 
 ---
 
